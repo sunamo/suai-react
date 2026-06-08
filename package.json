@@ -1,0 +1,22 @@
+{
+  "name": "suai-react",
+  "version": "1.0.0",
+  "description": "React/MUI AI components (AiSourceSelector, AiCallsPage) built on top of suai",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@mui/icons-material": "*",
+    "@mui/material": "*",
+    "react": ">=18",
+    "react-dom": ">=18",
+    "react-i18next": "*",
+    "suai": "*"
+  }
+}
