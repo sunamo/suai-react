@@ -15,10 +15,11 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import { useTranslation } from "react-i18next";
 import type { AiCallEntry } from "suai";
+import { friendlyError } from "suai/renderer";
 
-type Props = { entries: AiCallEntry[] };
+type Props = { entries: AiCallEntry[]; showDebug?: boolean };
 
-export function AiCallsPage({ entries }: Props) {
+export function AiCallsPage({ entries, showDebug }: Props) {
   const { t } = useTranslation("suai");
   const [expanded, setExpanded] = useState<number | null>(null);
   const [, setTick] = useState(0);
@@ -63,6 +64,9 @@ export function AiCallsPage({ entries }: Props) {
               color={e.status === "error" ? "error" : e.durationMs > 5000 ? "warning" : "success"}
               sx={{ fontSize: "0.7rem" }}
             />
+            {(e.attempts ?? 1) > 1 && (
+              <Chip label={`retry ${e.attempts}×`} size="small" color="warning" variant="outlined" sx={{ fontSize: "0.7rem" }} />
+            )}
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
               {t("aiCalls.promptLen", { chars: e.promptLength, respChars: e.responseLength })}
             </Typography>
@@ -85,7 +89,7 @@ export function AiCallsPage({ entries }: Props) {
           </Box>
           {e.status === "error" && e.error && (
             <Typography variant="caption" sx={{ color: "error.main", display: "block", mt: 0.5 }}>
-              {e.error}
+              {friendlyError(e.error)}
             </Typography>
           )}
           <Collapse in={expanded === e.id}>
@@ -109,6 +113,36 @@ export function AiCallsPage({ entries }: Props) {
                   sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.7rem", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflow: "auto" }}
                 >
                   {e.response}
+                </Box>
+              </>
+            )}
+            {showDebug && e.debugInfo && (
+              <>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="caption" sx={{ fontWeight: 600, display: "block", mb: 0.5, color: "warning.main" }}>
+                  HTTP Debug
+                </Typography>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                    <strong>URL:</strong> {e.debugInfo.url}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                    <strong>Status:</strong> {e.debugInfo.httpStatus}
+                  </Typography>
+                  <Typography variant="caption" sx={{ fontWeight: 600, display: "block", mt: 0.5 }}>Request body:</Typography>
+                  <Box
+                    component="pre"
+                    sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.65rem", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 150, overflow: "auto" }}
+                  >
+                    {(() => { try { return JSON.stringify(JSON.parse(e.debugInfo.requestBody), null, 2); } catch { return e.debugInfo.requestBody; } })()}
+                  </Box>
+                  <Typography variant="caption" sx={{ fontWeight: 600, display: "block", mt: 0.5 }}>Raw response:</Typography>
+                  <Box
+                    component="pre"
+                    sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.65rem", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 150, overflow: "auto" }}
+                  >
+                    {e.debugInfo.rawResponse || "(empty)"}
+                  </Box>
                 </Box>
               </>
             )}

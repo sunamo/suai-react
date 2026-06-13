@@ -24,6 +24,9 @@ import { DEFAULT_MODEL, getApiKeyUrl, MODEL_METADATA, getModelReleaseDate, getMo
 import type { AiSettings, AiProvider, FreePublicProvider } from "suai";
 import { friendlyError } from "suai/renderer";
 
+// module-level cache — survives component remount, keyed by token
+const _sunamoCache = new Map<string, { status: "ok" | "auth" | "error"; message?: string }>();
+
 const API_KEY_PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)" },
   { id: "openai", label: "OpenAI" },
@@ -80,6 +83,14 @@ export function AiSourceSelector({
   const [showSunamoPassword, setShowSunamoPassword] = useState(false);
   const [sunamoLogging, setSunamoLogging] = useState(false);
   const [sunamoError, setSunamoError] = useState<string | null>(null);
+  const [sunamoClaudeStatus, setSunamoClaudeStatus] = useState<null | "checking" | "ok" | "auth" | "error">(() => {
+    const cached = settings.sunamoToken ? _sunamoCache.get(settings.sunamoToken) : undefined;
+    return cached?.status ?? null;
+  });
+  const [sunamoClaudeError, setSunamoClaudeError] = useState<string | null>(() => {
+    const cached = settings.sunamoToken ? _sunamoCache.get(settings.sunamoToken) : undefined;
+    return cached?.message ?? null;
+  });
   const [freeDragIdx, setFreeDragIdx] = useState<number | null>(null);
   const [installLocations, setInstallLocations] = useState<{ id: string; path: string; found: boolean }[] | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
@@ -130,6 +141,14 @@ export function AiSourceSelector({
     }
   }, [activeGroup, claudeAvailable]);
 
+  // check sunamo token once on mount if active and not yet cached
+  useEffect(() => {
+    if (activeGroup === "sunamo" && settings.sunamoToken && sunamoClaudeStatus === null) {
+      runSunamoCheck(settings.sunamoToken);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // auto-scroll output box
   useEffect(() => {
     if (installOutputRef.current) installOutputRef.current.scrollTop = installOutputRef.current.scrollHeight;
@@ -155,9 +174,24 @@ export function AiSourceSelector({
       .finally(() => { (window as any).electronAPI.offInstallOutput(); setInstalling(null); });
   }, [t]);
 
+  const runSunamoCheck = (token: string) => {
+    setSunamoClaudeStatus("checking");
+    setSunamoClaudeError(null);
+    (window as any).electronAPI.sunamoCheckToken({ token })
+      .then((r: { status: "ok" | "auth" | "error"; message?: string }) => {
+        _sunamoCache.set(token, r);
+        setSunamoClaudeStatus(r.status);
+        setSunamoClaudeError(r.message ?? null);
+      })
+      .catch(() => { setSunamoClaudeStatus("error"); setSunamoClaudeError(null); });
+  };
+
   const selectGroup = (g: Group) => {
     if (g === "cli") onChange({ ...settings, aiProvider: "anthropic-account", aiModel: "" });
-    else if (g === "sunamo") onChange({ ...settings, aiProvider: "sunamo" });
+    else if (g === "sunamo") {
+      onChange({ ...settings, aiProvider: "sunamo" });
+      if (settings.sunamoToken && sunamoClaudeStatus === null) runSunamoCheck(settings.sunamoToken);
+    }
     else if (g === "free") onChange({ ...settings, aiProvider: "free", aiModel: "" });
     else onChange({ ...settings, aiProvider: apiKeyProvider, aiModel: settings.aiModel || getDefaultModel(apiKeyProvider) });
   };
@@ -535,7 +569,13 @@ export function AiSourceSelector({
             <Typography variant="body2" sx={{ fontWeight: 600 }}>Sunamo.cz</Typography>
             <Typography variant="caption" sx={{ opacity: 0.65 }}>{t("sunamoDesc")}</Typography>
           </Box>
-          {activeGroup === "sunamo" && settings.sunamoToken && <CheckCircle fontSize="small" sx={{ color: "success.main" }} />}
+          {activeGroup === "sunamo" && settings.sunamoToken && sunamoClaudeStatus === "checking" && <CircularProgress size={16} />}
+          {activeGroup === "sunamo" && settings.sunamoToken && (sunamoClaudeStatus === "ok" || sunamoClaudeStatus === null) && <CheckCircle fontSize="small" sx={{ color: "success.main" }} />}
+          {activeGroup === "sunamo" && settings.sunamoToken && (sunamoClaudeStatus === "error" || sunamoClaudeStatus === "auth") && (
+            <Tooltip title={sunamoClaudeStatus === "auth" ? "Přihlášení vypršelo" : (sunamoClaudeError ?? "Chyba serveru")} placement="top">
+              <ErrorOutline fontSize="small" sx={{ color: "error.main" }} />
+            </Tooltip>
+          )}
           {activeGroup === "sunamo" && !settings.sunamoToken && (
             <Tooltip title={t("sunamoLogin")} placement="top">
               <InfoOutlinedIcon fontSize="small" sx={{ color: "error.main" }} />
@@ -554,19 +594,29 @@ export function AiSourceSelector({
               </Paper>
             )}
             {settings.sunamoToken ? (
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="caption" sx={{ opacity: 0.6, display: "block" }}>{t("sunamoLoggedInAs")}</Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{settings.sunamoEmail}</Typography>
-                  <Typography variant="caption" sx={{ opacity: 0.7, cursor: "pointer", textDecoration: "underline" }}
-                    onClick={(e) => { e.stopPropagation(); (window as any).electronAPI.openExternal("https://sunamo.cz/profil"); }}>
-                    {t("sunamoProfile")}
-                  </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="caption" sx={{ opacity: 0.6, display: "block" }}>{t("sunamoLoggedInAs")}</Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{settings.sunamoEmail}</Typography>
+                    <Typography variant="caption" sx={{ opacity: 0.7, cursor: "pointer", textDecoration: "underline" }}
+                      onClick={(e) => { e.stopPropagation(); (window as any).electronAPI.openExternal("https://sunamo.cz/profil"); }}>
+                      {t("sunamoProfile")}
+                    </Typography>
+                  </Box>
+                  <Button variant="outlined" size="small" color="error"
+                    onClick={(e) => { e.stopPropagation(); handleSunamoLogout(); }}>
+                    {t("sunamoLogout")}
+                  </Button>
                 </Box>
-                <Button variant="outlined" size="small" color="error"
-                  onClick={(e) => { e.stopPropagation(); handleSunamoLogout(); }}>
-                  {t("sunamoLogout")}
-                </Button>
+                {sunamoClaudeStatus === "auth" && (
+                  <Alert severity="warning" sx={{ fontSize: "0.78rem", py: 0.25 }}>Přihlášení na sunamo.cz vypršelo. Odhlaste se a přihlaste znovu.</Alert>
+                )}
+                {sunamoClaudeStatus === "error" && (
+                  <Alert severity="error" sx={{ fontSize: "0.78rem", py: 0.25 }}>
+                    Chyba serveru sunamo.cz{sunamoClaudeError ? `: ${sunamoClaudeError}` : ""}
+                  </Alert>
+                )}
               </Box>
             ) : (
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }} onClick={(e) => e.stopPropagation()}>
@@ -621,6 +671,7 @@ export function AiSourceSelector({
             <Typography variant="body2" sx={{ fontWeight: 600 }}>{t("freeTitle")}</Typography>
             <Typography variant="caption" sx={{ opacity: 0.65 }}>{t("freeDesc")}</Typography>
           </Box>
+          {activeGroup === "free" && <CheckCircle fontSize="small" sx={{ color: "success.main" }} />}
         </Box>
         {activeGroup === "free" && (
           <Box sx={{ pl: 3.5, display: "flex", flexDirection: "column", gap: 1 }} onClick={(e) => e.stopPropagation()}>
