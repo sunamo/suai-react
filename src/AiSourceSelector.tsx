@@ -243,7 +243,7 @@ export function AiSourceSelector({
             <Typography variant="body2" sx={{ fontWeight: 600 }}>Claude CLI (claude.cmd)</Typography>
             <Typography variant="caption" sx={{ opacity: 0.65 }}>{t("cliDesc")}</Typography>
           </Box>
-          {activeGroup === "cli" && claudeAvailable === true && <CheckCircle fontSize="small" sx={{ color: "success.main" }} />}
+          {activeGroup === "cli" && claudeAvailable === true && installLocations !== null && <CheckCircle fontSize="small" sx={{ color: "success.main" }} />}
           {activeGroup === "cli" && claudeAvailable === false && <Tooltip title={t("cliNotFound").replace(/ —.*$/, "")} placement="top"><ErrorOutline fontSize="small" sx={{ color: "error.main" }} /></Tooltip>}
         </Box>
         {activeGroup === "cli" && (
