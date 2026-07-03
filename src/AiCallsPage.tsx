@@ -67,6 +67,14 @@ export function AiCallsPage({ entries, showDebug }: Props) {
             {(e.attempts ?? 1) > 1 && (
               <Chip label={`retry ${e.attempts}×`} size="small" color="warning" variant="outlined" sx={{ fontSize: "0.7rem" }} />
             )}
+            {e.ollamaParams && (
+              <>
+                <Chip label={`ctx ${e.ollamaParams.numCtx}`} size="small" variant="outlined" sx={{ fontSize: "0.65rem", color: "text.secondary" }} />
+                <Chip label={`pred ${e.ollamaParams.numPredict}`} size="small" variant="outlined" sx={{ fontSize: "0.65rem", color: "text.secondary" }} />
+                <Chip label={`t ${e.ollamaParams.temperature}`} size="small" variant="outlined" sx={{ fontSize: "0.65rem", color: "text.secondary" }} />
+                <Chip label={`ka ${e.ollamaParams.keepAlive}s`} size="small" variant="outlined" sx={{ fontSize: "0.65rem", color: "text.secondary" }} />
+              </>
+            )}
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
               {t("aiCalls.promptLen", { chars: e.promptLength, respChars: e.responseLength })}
             </Typography>
@@ -99,7 +107,7 @@ export function AiCallsPage({ entries, showDebug }: Props) {
             </Typography>
             <Box
               component="pre"
-              sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.7rem", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 300, overflow: "auto" }}
+              sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.7rem", whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 60, resize: "vertical", overflow: "auto" }}
             >
               {e.prompt}
             </Box>
@@ -110,7 +118,7 @@ export function AiCallsPage({ entries, showDebug }: Props) {
                 </Typography>
                 <Box
                   component="pre"
-                  sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.7rem", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflow: "auto" }}
+                  sx={{ m: 0, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: "0.7rem", whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 40, resize: "vertical", overflow: "auto" }}
                 >
                   {e.response}
                 </Box>
