@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { flushSync } from "react-dom";
 import {
   Box, Typography, Paper, Radio, Divider, Button, TextField,
   Alert, CircularProgress, IconButton, Tooltip,
@@ -20,9 +21,11 @@ import InputAdornment from "@mui/material/InputAdornment";
 import { useTranslation } from "react-i18next";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import { DEFAULT_MODEL, getApiKeyUrl, MODEL_METADATA, getModelReleaseDate, getModelTier, FREE_PUBLIC_PROVIDERS, DEFAULT_FREE_PROVIDER_ORDER } from "suai";
+import { DEFAULT_MODEL, CLI_MODELS, getApiKeyUrl, MODEL_METADATA, getModelReleaseDate, getModelTier, FREE_PUBLIC_PROVIDERS, DEFAULT_FREE_PROVIDER_ORDER } from "suai";
 import type { AiSettings, AiProvider, FreePublicProvider } from "suai";
 import { friendlyError } from "suai/renderer";
+import { OllamaModelAndParams } from "./OllamaModelAndParams";
+import type { OllamaParamKey } from "./OllamaModelAndParams";
 
 // module-level cache — survives component remount, keyed by token
 const _sunamoCache = new Map<string, { status: "ok" | "auth" | "error"; message?: string }>();
@@ -34,12 +37,13 @@ const API_KEY_PROVIDERS = [
   { id: "openrouter", label: "OpenRouter" },
 ] as const;
 
-type Group = "cli" | "apikey" | "sunamo" | "free";
+type Group = "cli" | "apikey" | "sunamo" | "free" | "ollama";
 
 function groupOf(p: string): Group {
   if (p === "anthropic-account") return "cli";
   if (p === "sunamo") return "sunamo";
   if (p === "free") return "free";
+  if (p === "ollama") return "ollama";
   return "apikey";
 }
 
@@ -55,6 +59,13 @@ type Props = {
   sunamoIsLocalhost?: boolean;
   defaultModels?: Partial<Record<string, string>>;
   showReinstall?: boolean;
+  ollamaForceNotInstalled?: boolean;
+  ollamaForceNoModels?: boolean;
+  onOllamaModelsLoaded?: (models: string[]) => void;
+  ollamaModelLabel?: React.ReactNode;
+  ollamaExtra?: React.ReactNode;
+  ollamaHeaderWarning?: string;
+  ollamaBestParams?: { modelParamsMap: Record<string, Partial<Record<OllamaParamKey, number>>> };
 };
 
 export function AiSourceSelector({
@@ -69,6 +80,13 @@ export function AiSourceSelector({
   sunamoIsLocalhost,
   defaultModels,
   showReinstall = false,
+  ollamaForceNotInstalled = false,
+  ollamaForceNoModels = false,
+  onOllamaModelsLoaded,
+  ollamaModelLabel,
+  ollamaExtra,
+  ollamaHeaderWarning,
+  ollamaBestParams,
 }: Props) {
   const getDefaultModel = (provider: string) => defaultModels?.[provider] ?? DEFAULT_MODEL[provider as keyof typeof DEFAULT_MODEL] ?? "";
   const { t } = useTranslation("suai");
@@ -97,6 +115,19 @@ export function AiSourceSelector({
   const [installOutput, setInstallOutput] = useState<string>("");
   const [installResult, setInstallResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const installOutputRef = useRef<HTMLDivElement | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<{ installed: boolean; running: boolean; binaryPath?: string } | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaRunningModels, setOllamaRunningModels] = useState<string[]>([]);
+  const [ollamaRunningRefreshing, setOllamaRunningRefreshing] = useState(false);
+  const [ollamaStoppingModels, setOllamaStoppingModels] = useState<Set<string>>(new Set());
+  const [ollamaModelsListRefreshing, setOllamaModelsListRefreshing] = useState(false);
+  const [ollamaInstalling, setOllamaInstalling] = useState(false);
+  const [ollamaInstallOutput, setOllamaInstallOutput] = useState("");
+  const [ollamaInstallResult, setOllamaInstallResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [ollamaStarting, setOllamaStarting] = useState(false);
+  const [ollamaStartAttempt, setOllamaStartAttempt] = useState(0);
+  const [ollamaStartError, setOllamaStartError] = useState<string | null>(null);
+  const ollamaOutputRef = useRef<HTMLDivElement | null>(null);
 
   const activeGroup = groupOf(settings.aiProvider);
   const apiKeyProvider: AiProvider =
@@ -154,6 +185,26 @@ export function AiSourceSelector({
     if (installOutputRef.current) installOutputRef.current.scrollTop = installOutputRef.current.scrollHeight;
   }, [installOutput]);
 
+  useEffect(() => {
+    if (ollamaOutputRef.current) ollamaOutputRef.current.scrollTop = ollamaOutputRef.current.scrollHeight;
+  }, [ollamaInstallOutput]);
+
+  useEffect(() => {
+    if (ollamaModels.length > 0) onOllamaModelsLoaded?.(ollamaModels);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ollamaModels]);
+
+  useEffect(() => {
+    if (activeGroup !== "ollama" || ollamaForceNotInstalled) return;
+    (window as any).electronAPI.checkOllamaStatus().then((status: { installed: boolean; running: boolean; binaryPath?: string }) => {
+      setOllamaStatus(status);
+      if (status.running) {
+        (window as any).electronAPI.getOllamaModels().then(setOllamaModels);
+        fetch("http://localhost:11434/api/ps").then((r) => r.json()).then((j: any) => setOllamaRunningModels((j.models ?? []).map((m: any) => m.name as string))).catch(() => {});
+      }
+    });
+  }, [activeGroup, ollamaForceNotInstalled]);
+
   const runAction = useCallback((ipcMethod: string, args: string) => {
     setInstalling(ipcMethod + ":" + args);
     setInstallOutput("");
@@ -187,12 +238,13 @@ export function AiSourceSelector({
   };
 
   const selectGroup = (g: Group) => {
-    if (g === "cli") onChange({ ...settings, aiProvider: "anthropic-account", aiModel: "" });
+    if (g === "cli") onChange({ ...settings, aiProvider: "anthropic-account", aiModel: settings.aiModel || DEFAULT_MODEL["anthropic-account"] || "claude-sonnet-4-6" });
     else if (g === "sunamo") {
       onChange({ ...settings, aiProvider: "sunamo" });
       if (settings.sunamoToken && sunamoClaudeStatus === null) runSunamoCheck(settings.sunamoToken);
     }
     else if (g === "free") onChange({ ...settings, aiProvider: "free", aiModel: "" });
+    else if (g === "ollama") onChange({ ...settings, aiProvider: "ollama", aiModel: settings.aiModel || "" });
     else onChange({ ...settings, aiProvider: apiKeyProvider, aiModel: settings.aiModel || getDefaultModel(apiKeyProvider) });
   };
 
@@ -251,6 +303,22 @@ export function AiSourceSelector({
             {claudeAvailable === true && (
               <Typography variant="caption" sx={{ opacity: 0.6 }}>{t("aiAccountInfo")}</Typography>
             )}
+            <Box sx={{ display: "flex", gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
+              {CLI_MODELS.map((m) => {
+                const selected = (settings.aiModel || DEFAULT_MODEL["anthropic-account"]) === m.id;
+                return (
+                  <Button
+                    key={m.id}
+                    size="small"
+                    variant={selected ? "contained" : "outlined"}
+                    onClick={() => onChange({ ...settings, aiModel: m.id })}
+                    sx={{ fontSize: "0.7rem", py: 0.25, px: 0.75, textTransform: "none", minWidth: 0 }}
+                  >
+                    {m.label}
+                  </Button>
+                );
+              })}
+            </Box>
             <>
                 {installLocations ? (
                   <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }} onClick={(e) => e.stopPropagation()}>
@@ -662,6 +730,253 @@ export function AiSourceSelector({
         )}
       </Paper>
 
+      {/* Ollama card */}
+      <Paper sx={cardSx(activeGroup === "ollama")} onClick={() => selectGroup("ollama")}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Radio checked={activeGroup === "ollama"} size="small" sx={{ p: 0 }}
+            onClick={(e) => e.stopPropagation()} onChange={() => selectGroup("ollama")} />
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>Ollama (lokálně)</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.65 }}>Modely běžící na vašem počítači</Typography>
+          </Box>
+          {activeGroup === "ollama" && !ollamaForceNotInstalled && ollamaStatus?.running && !ollamaForceNoModels && ollamaModels.includes(settings.aiModel) && !ollamaHeaderWarning && <CheckCircle fontSize="small" sx={{ color: "success.main" }} />}
+          {activeGroup === "ollama" && (ollamaHeaderWarning || ollamaForceNotInstalled || ollamaForceNoModels || (ollamaStatus?.running && !ollamaModels.includes(settings.aiModel)) || (ollamaStatus && !ollamaStatus.running)) && (
+            <Tooltip title={
+              ollamaForceNotInstalled || !ollamaStatus?.installed ? "Ollama není nainstalována" :
+              !ollamaStatus?.running ? "Ollama je nainstalována, ale neběží" :
+              ollamaForceNoModels || ollamaModels.length === 0 ? "Ollama běží, ale nemá žádný model" :
+              ollamaHeaderWarning ?? "Není vybrán model"
+            } placement="top">
+              <ErrorOutline fontSize="small" sx={{ color: "error.main" }} />
+            </Tooltip>
+          )}
+        </Box>
+        {activeGroup === "ollama" && (
+          <Box sx={{ pl: 3.5, display: "flex", flexDirection: "column", gap: 1 }} onClick={(e) => e.stopPropagation()}>
+            <Divider />
+            {ollamaStatus === null && !ollamaForceNotInstalled ? (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <CircularProgress size={14} />
+                <Typography variant="caption" sx={{ opacity: 0.6 }}>Zjišťuji stav Ollaamy...</Typography>
+              </Box>
+            ) : !ollamaForceNotInstalled && ollamaStatus?.running ? (
+              <>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Typography variant="caption" sx={{ opacity: 0.6 }}>Ollama běží na localhost:11434</Typography>
+                  <Tooltip title="Zkontroluje zda Ollama stále běží a které modely jsou v RAM" placement="top">
+                    <span>
+                      <Button size="small" variant="text" disabled={ollamaRunningRefreshing}
+                        sx={{ fontSize: "0.65rem", py: 0, px: 0.5, textTransform: "none", opacity: 0.7 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOllamaRunningRefreshing(true);
+                          (window as any).electronAPI.checkOllamaStatus().then((s: { installed: boolean; running: boolean; binaryPath?: string }) => {
+                            setOllamaStatus(s);
+                          }).catch(() => {});
+                          fetch("http://localhost:11434/api/ps").then((r) => r.json()).then((j: any) => setOllamaRunningModels((j.models ?? []).map((m: any) => m.name as string))).catch(() => {}).finally(() => setOllamaRunningRefreshing(false));
+                        }}>
+                        {ollamaRunningRefreshing ? <CircularProgress size={11} sx={{ mr: 0.5 }} /> : null}
+                        Obnovit stav
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Znovu načte seznam nainstalovaných modelů (po: ollama pull <model>)" placement="top">
+                    <span>
+                      <Button size="small" variant="text" disabled={ollamaModelsListRefreshing}
+                        sx={{ fontSize: "0.65rem", py: 0, px: 0.5, textTransform: "none", opacity: 0.7 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOllamaModelsListRefreshing(true);
+                          (window as any).electronAPI.getOllamaModels().then(setOllamaModels).catch(() => {}).finally(() => setOllamaModelsListRefreshing(false));
+                        }}>
+                        {ollamaModelsListRefreshing ? <CircularProgress size={11} sx={{ mr: 0.5 }} /> : null}
+                        Obnovit modely
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </Box>
+                {ollamaRunningModels.length > 0 && (
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                    <Typography variant="caption" sx={{ opacity: 0.55 }}>V RAM:</Typography>
+                    {ollamaRunningModels.map((m) => (
+                      <Chip
+                        key={m}
+                        label={m}
+                        size="small"
+                        disabled={ollamaStoppingModels.has(m)}
+                        onDelete={() => {
+                          setOllamaStoppingModels((prev) => new Set(prev).add(m));
+                          (window as any).electronAPI.stopOllamaModel(m)
+                            .finally(() => {
+                              fetch("http://localhost:11434/api/ps")
+                                .then((r) => r.json())
+                                .then((j: any) => setOllamaRunningModels((j.models ?? []).map((x: any) => x.name as string)))
+                                .catch(() => {})
+                                .finally(() => setOllamaStoppingModels((prev) => { const s = new Set(prev); s.delete(m); return s; }));
+                            });
+                        }}
+                        deleteIcon={ollamaStoppingModels.has(m) ? <CircularProgress size={12} /> : undefined}
+                        sx={{ fontSize: "0.65rem", height: 20 }}
+                      />
+                    ))}
+                  </Box>
+                )}
+                <OllamaModelAndParams
+                  label={ollamaModelLabel}
+                  models={ollamaForceNoModels ? [] : ollamaModels}
+                  selectedModel={settings.aiModel || undefined}
+                  onModelChange={(m) => onChange({ ...settings, aiModel: m })}
+                  numCtx={settings.ollamaNumCtx}
+                  numPredict={settings.ollamaNumPredict}
+                  temperature={settings.ollamaTemperature}
+                  keepAlive={settings.ollamaKeepAlive}
+                  onParamChange={(key, v) => {
+                    const keyMap: Record<string, keyof typeof settings> = { numCtx: "ollamaNumCtx", numPredict: "ollamaNumPredict", temperature: "ollamaTemperature", keepAlive: "ollamaKeepAlive" };
+                    onChange({ ...settings, [keyMap[key]]: v });
+                  }}
+                  bestParamsMap={ollamaBestParams?.modelParamsMap}
+                />
+                {ollamaExtra}
+              </>
+            ) : (
+              <>
+                <Alert severity="warning" sx={{ py: 0, fontSize: "0.78rem" }}>
+                  {!ollamaForceNotInstalled && ollamaStatus?.installed ? "Ollama je nainstalována, ale neběží." : "Ollama není nainstalována."}
+                </Alert>
+                {!ollamaForceNotInstalled && ollamaStatus?.installed && (
+                  <>
+                    <Button size="small" variant="outlined"
+                      disabled={ollamaStarting}
+                      startIcon={ollamaStarting ? <CircularProgress size={11} /> : undefined}
+                      onClick={() => {
+                        const MAX_ATTEMPTS = 5;
+                        flushSync(() => {
+                          setOllamaStarting(true);
+                          setOllamaStartAttempt(0);
+                          setOllamaStartError(null);
+                        });
+                        (window as any).electronAPI.startOllama()
+                          .then((r: { success: boolean; error?: string }) => {
+                            if (!r.success) {
+                              flushSync(() => {
+                                setOllamaStartError("Nepodařilo se spustit: " + (r.error ?? "neznámá chyba"));
+                                setOllamaStarting(false);
+                                setOllamaStartAttempt(0);
+                              });
+                              return;
+                            }
+                            let attempts = 0;
+                            const poll = () => {
+                              attempts++;
+                              flushSync(() => setOllamaStartAttempt(attempts));
+                              (window as any).electronAPI.checkOllamaStatus()
+                                .then((s: { installed: boolean; running: boolean; binaryPath?: string }) => {
+                                  if (s.running) {
+                                    flushSync(() => {
+                                      setOllamaStatus(s);
+                                      setOllamaStarting(false);
+                                      setOllamaStartAttempt(0);
+                                    });
+                                    (window as any).electronAPI.getOllamaModels().then(setOllamaModels);
+                                  } else if (attempts < MAX_ATTEMPTS) {
+                                    setTimeout(poll, 2000);
+                                  } else {
+                                    flushSync(() => {
+                                      setOllamaStartError(`Ollama se nespustila do ${MAX_ATTEMPTS * 2}s. Zkuste spustit ručně: ollama serve`);
+                                      setOllamaStarting(false);
+                                      setOllamaStartAttempt(0);
+                                    });
+                                  }
+                                })
+                                .catch((e: unknown) => {
+                                  flushSync(() => {
+                                    setOllamaStartError("Chyba při zjišťování stavu: " + String(e));
+                                    setOllamaStarting(false);
+                                    setOllamaStartAttempt(0);
+                                  });
+                                });
+                            };
+                            setTimeout(poll, 2000);
+                          })
+                          .catch((err: unknown) => {
+                            flushSync(() => {
+                              setOllamaStartError("Chyba IPC: " + String(err));
+                              setOllamaStarting(false);
+                              setOllamaStartAttempt(0);
+                            });
+                          });
+                      }}
+                      sx={{ alignSelf: "flex-start", fontSize: "0.75rem" }}
+                    >
+                      {ollamaStarting ? (ollamaStartAttempt > 0 ? `Čekám... (${ollamaStartAttempt}/5)` : "Spouštím...") : "Spustit Ollamu"}
+                    </Button>
+                    {ollamaStartError && <Alert severity="error" sx={{ py: 0, fontSize: "0.75rem" }}>{ollamaStartError}</Alert>}
+                  </>
+                )}
+                {(ollamaForceNotInstalled || !ollamaStatus?.installed) && (
+                  <>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                      <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={ollamaInstalling}
+                      startIcon={ollamaInstalling ? <CircularProgress size={11} /> : undefined}
+                      onClick={() => {
+                        setOllamaInstalling(true);
+                        setOllamaInstallOutput("");
+                        setOllamaInstallResult(null);
+                        (window as any).electronAPI.onInstallOutput((chunk: string) => {
+                          setOllamaInstallOutput((prev) => prev + chunk);
+                        });
+                        (window as any).electronAPI.installOllama()
+                          .then((r: { success: boolean; output: string }) => {
+                            setOllamaInstallResult({ ok: r.success, msg: r.success ? "Ollama nainstalována." : `Instalace selhala: ${r.output}` });
+                            if (r.success) {
+                              (window as any).electronAPI.checkOllamaStatus().then((s: typeof ollamaStatus) => {
+                                setOllamaStatus(s);
+                                if (s?.running) (window as any).electronAPI.getOllamaModels().then(setOllamaModels);
+                              });
+                            }
+                          })
+                          .catch((err: unknown) => { setOllamaInstallResult({ ok: false, msg: String(err) }); })
+                          .finally(() => { (window as any).electronAPI.offInstallOutput(); setOllamaInstalling(false); });
+                      }}
+                      sx={{ alignSelf: "flex-start", fontSize: "0.75rem" }}
+                    >
+                      {ollamaInstalling ? "Instaluji přes winget..." : "Nainstalovat Ollamu"}
+                    </Button>
+                      <Tooltip placement="top" title={
+                        <Box sx={{ fontSize: "0.78rem", lineHeight: 1.6 }}>
+                          <strong>Co se nainstaluje:</strong><br />
+                          1. <strong>Ollama</strong> – runtime + HTTP server (přes winget)<br />
+                          2. <strong>Model</strong> – jazykový model je potřeba stáhnout zvlášť po instalaci, např.:<br />
+                          <code style={{ fontSize: "0.75rem" }}>ollama pull qwen2.5:7b</code>
+                        </Box>
+                      }>
+                        <InfoOutlinedIcon sx={{ fontSize: 16, color: "text.secondary", cursor: "default", mt: 0.25 }} />
+                      </Tooltip>
+                    </Box>
+                    {(ollamaInstalling || ollamaInstallOutput) && (
+                      <Box ref={ollamaOutputRef}
+                        sx={{ mt: 0.5, p: 1, maxHeight: 120, overflowY: "auto", bgcolor: "grey.900", borderRadius: 1,
+                          fontFamily: "monospace", fontSize: "0.68rem", color: "grey.100", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                        {ollamaInstallOutput || <CircularProgress size={12} sx={{ color: "grey.400" }} />}
+                      </Box>
+                    )}
+                    {ollamaInstallResult && (
+                      <Alert severity={ollamaInstallResult.ok ? "success" : "error"} sx={{ py: 0, fontSize: "0.75rem" }}>
+                        {ollamaInstallResult.msg}
+                      </Alert>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+            {problem && <Alert severity="warning" sx={{ py: 0, fontSize: "0.78rem" }}>{problem}</Alert>}
+          </Box>
+        )}
+      </Paper>
+
       {/* Only free access card */}
       <Paper sx={cardSx(activeGroup === "free")} onClick={() => selectGroup("free")}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -719,6 +1034,7 @@ export function AiSourceSelector({
           </Box>
         )}
       </Paper>
+
     </Box>
   );
 }
