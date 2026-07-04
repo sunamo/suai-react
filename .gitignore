@@ -6,3 +6,6 @@ lib/
 .env.local
 .DS_Store
 Thumbs.db
+
+# Git worktree pracovni kopie (nikdy nesmi byt trackovane)
+*-claude*/
