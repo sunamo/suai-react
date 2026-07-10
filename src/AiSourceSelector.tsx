@@ -52,6 +52,8 @@ type Props = {
   onChange: (s: AiSettings) => void;
   claudeAvailable: boolean | null;
   onClaudeDetected?: () => void;
+  // Zdroje AI, ktere se nemaji vubec zobrazit (napr. na webu, kde funguje jen sunamo).
+  hiddenSources?: Group[];
   problem?: string | null;
   devAutoFill?: { email: string; password: string } | null;
   onClearDevAutoFill?: () => void;
@@ -73,6 +75,7 @@ export function AiSourceSelector({
   onChange,
   claudeAvailable,
   onClaudeDetected: _onClaudeDetected,
+  hiddenSources,
   problem,
   devAutoFill,
   onClearDevAutoFill,
@@ -277,6 +280,8 @@ export function AiSourceSelector({
     }
   };
 
+  const isHidden = (g: Group) => !!hiddenSources?.includes(g);
+
   const cardSx = (active: boolean) => ({
     p: 2, display: "flex", flexDirection: "column", gap: 1.5, cursor: "pointer",
     borderColor: active ? "primary.main" : "divider",
@@ -287,6 +292,7 @@ export function AiSourceSelector({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
       {/* CLI card */}
+      {!isHidden("cli") && (
       <Paper sx={cardSx(activeGroup === "cli")} onClick={() => selectGroup("cli")}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Radio checked={activeGroup === "cli"} size="small" sx={{ p: 0 }}
@@ -401,8 +407,10 @@ export function AiSourceSelector({
           </Box>
         )}
       </Paper>
+      )}
 
       {/* API key card */}
+      {!isHidden("apikey") && (
       <Paper sx={cardSx(activeGroup === "apikey")} onClick={() => selectGroup("apikey")}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Radio checked={activeGroup === "apikey"} size="small" sx={{ p: 0 }}
@@ -627,6 +635,7 @@ export function AiSourceSelector({
           </Box>
         )}
       </Paper>
+      )}
 
       {/* Sunamo card */}
       <Paper sx={cardSx(activeGroup === "sunamo")} onClick={() => selectGroup("sunamo")}>
@@ -731,6 +740,7 @@ export function AiSourceSelector({
       </Paper>
 
       {/* Ollama card */}
+      {!isHidden("ollama") && (
       <Paper sx={cardSx(activeGroup === "ollama")} onClick={() => selectGroup("ollama")}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Radio checked={activeGroup === "ollama"} size="small" sx={{ p: 0 }}
@@ -976,8 +986,10 @@ export function AiSourceSelector({
           </Box>
         )}
       </Paper>
+      )}
 
       {/* Only free access card */}
+      {!isHidden("free") && (
       <Paper sx={cardSx(activeGroup === "free")} onClick={() => selectGroup("free")}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Radio checked={activeGroup === "free"} size="small" sx={{ p: 0 }}
@@ -1034,6 +1046,7 @@ export function AiSourceSelector({
           </Box>
         )}
       </Paper>
+      )}
 
     </Box>
   );
