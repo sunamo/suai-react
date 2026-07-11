@@ -30,6 +30,15 @@ import type { OllamaParamKey } from "./OllamaModelAndParams";
 // module-level cache — survives component remount, keyed by token
 const _sunamoCache = new Map<string, { status: "ok" | "auth" | "error"; message?: string }>();
 
+// Potlaci nevzhledne modre/zlute pozadi, ktere Chromium (Electron) kresli u autofillnutych poli
+const noAutofillBgSx = {
+  "& input:-webkit-autofill, & input:-webkit-autofill:hover, & input:-webkit-autofill:focus, & input:-webkit-autofill:active": {
+    WebkitTextFillColor: "currentColor",
+    caretColor: "currentColor",
+    transition: "background-color 600000s 0s, color 600000s 0s",
+  },
+};
+
 const API_KEY_PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)" },
   { id: "openai", label: "OpenAI" },
@@ -706,9 +715,9 @@ export function AiSourceSelector({
                     </Button>
                   </Box>
                 )}
-                <TextField label={t("sunamoEmail")} value={sunamoEmail} size="small" fullWidth type="email" autoComplete="email"
+                <TextField label={t("sunamoEmail")} value={sunamoEmail} size="small" fullWidth type="email" autoComplete="email" sx={noAutofillBgSx}
                   onChange={(e) => setSunamoEmail(e.target.value)} />
-                <TextField label={t("sunamoPassword")} value={sunamoPassword} size="small" fullWidth type={showSunamoPassword ? "text" : "password"} autoComplete="current-password"
+                <TextField label={t("sunamoPassword")} value={sunamoPassword} size="small" fullWidth type={showSunamoPassword ? "text" : "password"} autoComplete="current-password" sx={noAutofillBgSx}
                   onChange={(e) => setSunamoPassword(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleSunamoLogin(); }}
                   InputProps={{ endAdornment: (
