@@ -7,6 +7,7 @@ import {
   List, ListItemButton, ListItemText, Chip, InputAdornment as MuiInputAdornment,
   Checkbox, FormControlLabel, Select, MenuItem, FormControl, InputLabel,
 } from "@mui/material";
+import type { Theme } from "@mui/material";
 import CheckCircle from "@mui/icons-material/CheckCircle";
 import ErrorOutline from "@mui/icons-material/ErrorOutline";
 import Visibility from "@mui/icons-material/Visibility";
@@ -30,14 +31,17 @@ import type { OllamaParamKey } from "./OllamaModelAndParams";
 // module-level cache — survives component remount, keyed by token
 const _sunamoCache = new Map<string, { status: "ok" | "auth" | "error"; message?: string }>();
 
-// Potlaci nevzhledne modre/zlute pozadi, ktere Chromium (Electron) kresli u autofillnutych poli
-const noAutofillBgSx = {
+// Potlaci nevzhledne modre/zlute pozadi, ktere Chromium (Electron i Edge/Chrome na webu) kresli u autofillnutych poli.
+// Samotny transition-delay trik nestaci ve vsech Chromium verzich (na webu v Edge se autofill barva
+// prokreslila hned pri nacteni stranky) — box-shadow inset prebiji autofill pozadi spolehlive vzdy.
+const noAutofillBgSx = (theme: Theme) => ({
   "& input:-webkit-autofill, & input:-webkit-autofill:hover, & input:-webkit-autofill:focus, & input:-webkit-autofill:active": {
-    WebkitTextFillColor: "currentColor",
-    caretColor: "currentColor",
+    WebkitBoxShadow: `0 0 0 1000px ${theme.palette.background.paper} inset`,
+    WebkitTextFillColor: theme.palette.text.primary,
+    caretColor: theme.palette.text.primary,
     transition: "background-color 600000s 0s, color 600000s 0s",
   },
-};
+});
 
 const API_KEY_PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)" },
